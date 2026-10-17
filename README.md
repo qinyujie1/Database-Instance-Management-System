@@ -13,34 +13,152 @@
 | 每日数量统计 | 每天 00:00 保存部门与集群两个维度的快照，包含零实例分组；唯一约束防止重复写入 |
 | 请求耗时 | `perf_counter()` 计时，结构化日志及 `X-Request-Duration-Ms` 响应头 |
 
-## Windows 本地启动
+## 首次克隆与运行（Windows）
 
-在项目目录执行（Python 3.12+）：
+适用于其他人第一次下载本仓库并在自己的电脑运行。请使用 PowerShell，依次执行以下步骤；某一步报错时先解决错误，再继续。
+
+### 1. 准备环境
+
+- 安装 Git 和 Python 3.12，安装 Python 时勾选加入 PATH。
+- 本地演示使用 SQLite 和 Celery 文件队列，无需另外安装 MySQL、PostgreSQL、Redis 或 Docker。
+- 如果仓库是私有仓库，需要仓库所有者先授予访问权限，并使用有权限的 GitHub 账号认证。
+
+检查安装结果：
+
+```powershell
+git --version
+python --version
+```
+
+### 2. 克隆仓库
+
+在你希望存放项目的目录打开 PowerShell：
+
+```powershell
+git clone https://github.com/qinyujie1/Database-Instance-Management-System.git
+cd Database-Instance-Management-System
+```
+
+后续所有命令均在这个项目目录执行，不要进入其他项目目录。
+
+### 3. 创建虚拟环境并安装依赖
 
 ```powershell
 python -m venv .venv
 .\.venv\Scripts\python.exe -m pip install -r requirements.txt
+```
+
+这里直接调用虚拟环境中的 Python，不需要另外激活虚拟环境。
+
+### 4. 生成本地配置和加密密钥
+
+```powershell
 .\.venv\Scripts\python.exe scripts/bootstrap.py
+```
+
+该命令生成本机 `.env`，包含独立的 Django 密钥、凭据加密密钥、调试和演示模式配置。已有 `.env` 会保留，不会覆盖。首次运行不需要复制仓库所有者的密钥或登录信息。
+
+`.env` 和本地数据库不会提交到 GitHub。初始化后应保留 `.env`；丢失其中的 `CREDENTIAL_KEY` 将无法解密已有实例密码。
+
+### 5. 创建数据库并导入模拟数据
+
+```powershell
 .\.venv\Scripts\python.exe manage.py migrate
 .\.venv\Scripts\python.exe manage.py seed_demo --instances 120
+```
+
+会创建本地 `db.sqlite3`，导入 **6 个部门、12 个集群、120 个模拟实例**，执行一次模拟密码轮换并生成当天统计快照，同时创建演示管理员。
+
+`seed_demo` 可重复执行，不覆盖已有实例，也不重置已有管理员密码。模拟实例是管理记录，不会实际启动 120 个数据库服务。
+
+### 6. 启动服务
+
+```powershell
 powershell -ExecutionPolicy Bypass -File scripts/start.ps1
 ```
 
-- 管理看板：http://127.0.0.1:8010/
-- Django 管理后台：http://127.0.0.1:8010/admin/
-- 可交互 API：http://127.0.0.1:8010/api/
-- 本地演示用户名：`admin`，初始密码：`123456`，登录页直接显示提示。`DEMO_MODE=1` 时新建管理员使用该初始密码；重复运行 seed_demo 不重置已有密码。关闭演示模式时新用户使用随机密码。API Token 和本地登录信息保存在 `.local-credentials.txt`。
-- `seed_demo` 可重复运行，不会覆盖已有实例或重置管理员密码。演示数据为 6 个部门、12 个集群、120 个模拟实例，并实际执行一次模拟凭据轮换、生成当天快照。
-- 每三个模拟实例有一个指向本地 Web 端口 8010，便于演示 TCP 可达；其余指向 65000（若此端口有其他服务监听，也可能可达）。TCP 可达仅代表端口开放，不代表数据库可正常认证。
-- 后台运行三个进程：Django Web、Celery solo worker、Celery Beat。日志和进程记录位于 `.runtime/`。
+脚本在后台启动三个进程：
 
-停止：
+| 进程 | 作用 |
+| --- | --- |
+| Django Web | 提供页面和 REST API，监听 `127.0.0.1:8010` |
+| Celery Worker | 执行密码轮换、统计等后台任务 |
+| Celery Beat | 按计划投递每天 00:00 / 12:00 的任务 |
+
+日志和进程记录位于 `.runtime/`。自动任务需要 Worker 和 Beat 持续运行，电脑关机后不会执行；重新开机需再次启动服务。
+
+### 7. 打开页面并登录
+
+- 中文管理工作台：http://127.0.0.1:8010/admin/
+- 首页：http://127.0.0.1:8010/
+- 可交互 API：http://127.0.0.1:8010/api/
+- **演示用户名：`admin`**
+- **初始密码：`123456`**
+
+上述账号适用于默认 `DEMO_MODE=1` 配置下首次运行 `seed_demo` 的情况。登录页会显示演示账号提示。API Token 和初始化登录信息保存在本机 `.local-credentials.txt`；如果后来修改密码，该文件不会自动更新。
+
+关闭演示模式时，新建管理员使用随机密码，请查看本机 `.local-credentials.txt`。已有管理员密码不会因重复导入数据而重置。对外部署前应更换演示密码并关闭演示模式。
+
+### 8. 验证功能
+
+- 在工作台查看部门、集群和实例数量，并进入列表新增、编辑或删除记录。
+- 选择 `demo-db-001` 点击「TCP 探测 / 密码轮换」：它指向本机 `8010` 端口，网站运行时可演示端口可达。
+- 选择 `demo-db-120` 探测：它指向本机 `65000` 端口，若没有服务监听，会显示连接被拒绝及中文排查建议。
+- 提交模拟实例的密码轮换后，稍后查看「密码轮换记录」确认实际结果；任务提交成功不等于已执行成功。
+- 查看「每日统计快照」和「请求耗时监控」，验证统计与请求记录。
+
+也可以运行项目检查和自动化测试：
+
+```powershell
+.\.venv\Scripts\python.exe manage.py check
+.\.venv\Scripts\python.exe manage.py test
+```
+
+### 9. 停止或再次启动
+
+使用完毕后，在项目目录停止后台服务：
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File scripts/stop.ps1
 ```
 
-本地使用 SQLite + Celery filesystem transport，无需安装 Redis。**该组合用于单 worker 演示**，不是生产部署。Celery 官方不支持 Windows；此处使用 solo 模式验证本机运行，正式环境使用 Linux + PostgreSQL + Redis。
+下次使用时，只需进入项目目录并执行启动脚本，不必重新克隆、生成密钥或导入数据：
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts/start.ps1
+```
+
+## 已有项目如何更新代码
+
+在已有项目目录执行。先检查本地修改；如有自己修改的文件，应先提交或妥善保存，避免与拉取的更新冲突。
+
+```powershell
+git status
+powershell -ExecutionPolicy Bypass -File scripts/stop.ps1
+git pull --ff-only origin main
+.\.venv\Scripts\python.exe -m pip install -r requirements.txt
+.\.venv\Scripts\python.exe manage.py migrate
+.\.venv\Scripts\python.exe manage.py check
+powershell -ExecutionPolicy Bypass -File scripts/start.ps1
+```
+
+各步成功后再继续；如果 `git pull --ff-only` 提示分支分叉，应先处理分支差异。拉取后要执行迁移，因为新版本可能新增表或字段。更新时保留原有 `.env`、`db.sqlite3` 和 `.local-credentials.txt`，不需要重新执行 `seed_demo`。页面更新后按 **Ctrl + F5** 刷新。
+
+## 本地启动常见问题
+
+| 现象 | 处理方式 |
+| --- | --- |
+| 找不到 `git` 或 `python` | 确认已安装并加入 PATH，然后重新打开 PowerShell |
+| 提示缺少 Django 等依赖 | 在项目目录使用 `.venv\Scripts\python.exe`，并执行依赖安装命令 |
+| 提示缺少配置或密钥 | 首次运行先执行 `scripts/bootstrap.py`；已有数据时应恢复原有 `.env` |
+| 提示数据库表不存在 | 执行 `manage.py migrate` 后再启动 |
+| 提示已有服务在运行 | 先运行 `scripts/stop.ps1`，再运行启动脚本 |
+| 8010 端口被占用 | 确认是否已运行本项目或其他服务，停止对应服务后再启动 |
+| 网页打不开或任务一直不执行 | 检查 `.runtime/web.err.log`、`.runtime/worker.err.log`、`.runtime/beat.err.log`；启动脚本的提示不替代日志检查 |
+| `admin / 123456` 无法登录 | 确认已导入模拟数据、首次创建账号时启用了演示模式，且密码没有后来被修改 |
+| 探测 65000 端口不可达 | 若该端口没有服务监听，这是正常检测结果；可用指向 8010 的模拟实例对比测试 |
+
+本地 SQLite + Celery filesystem transport 组合用于单 worker 演示。Celery 官方不支持 Windows，本项目在本机通过 solo 模式验证运行；Linux / Docker 环境请参阅下方部署章节。
 
 ## API 使用
 
