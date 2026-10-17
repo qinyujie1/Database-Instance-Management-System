@@ -51,13 +51,33 @@ class InstanceForm(forms.ModelForm):
 class InstanceAdmin(admin.ModelAdmin):
     form = InstanceForm
     actions = None
-    list_display = ["name", "department_name", "cluster", "host", "port", "engine", "username", "last_rotated_at", "credential_state", "operations"]
+    list_display = ["instance_number", "name", "department_name", "cluster", "host", "port", "engine", "username", "last_rotated_at", "credential_state", "operations"]
     list_filter = ["engine", "cluster__department", "cluster"]
     list_select_related = ["cluster__department"]
     search_fields = ["name", "host", "username"]
     readonly_fields = ["last_rotated_at", "credential_state"]
     fields = ["name", "cluster", "host", "port", "engine", "database", "username", "password", "last_rotated_at", "credential_state"]
     list_per_page = 25
+    ordering = ["id"]
+    list_display_links = ["name"]
+    change_list_template = "admin/instance_list.html"
+
+    @admin.display(description="实例编号", ordering="id")
+    def instance_number(self, obj):
+        return obj.pk
+
+    def changelist_view(self, request, extra_context=None):
+        response = super().changelist_view(request, extra_context)
+        if hasattr(response, "context_data") and response.context_data and "cl" in response.context_data:
+            cl = response.context_data["cl"]
+            labels = {0: "实例编号", 1: "名称", 2: "所属部门", 3: "所属集群", 4: "IP 地址", 5: "TCP 端口", 6: "数据库类型", 7: "数据库账号", 8: "最近轮换时间"}
+            columns = cl.get_ordering_field_columns()
+            summary = [f"{labels[index]}{'升序 ↑' if direction == 'asc' else '降序 ↓'}" for index, direction in columns.items() if index in labels]
+            options = [(str(index) if direction == "asc" else f"-{index}", f"{label} · {'升序 ↑' if direction == 'asc' else '降序 ↓'}") for index, label in labels.items() for direction in ("asc", "desc")]
+            current = request.GET.get("o", "0")
+            response.context_data.update({"sort_options": options, "current_sort": current, "sort_summary": "，".join(summary) or "实例编号升序 ↑", "sort_is_custom": current not in dict(options), "sort_filters": [(key, value) for key, values in request.GET.lists() if key not in ("o", "p", "e") for value in values]})
+        return response
+
 
     def get_object(self, request, object_id, from_field=None):
         obj = super().get_object(request, object_id, from_field)
@@ -73,7 +93,7 @@ class InstanceAdmin(admin.ModelAdmin):
     def has_delete_permission(self, request, obj=None):
         return super().has_delete_permission(request, obj) and not (obj and (obj.rotation_token or obj.pending_password_encrypted))
 
-    @admin.display(description="所属部门")
+    @admin.display(description="所属部门", ordering="cluster__department__name")
     def department_name(self, obj):
         return obj.cluster.department.name
 
@@ -188,7 +208,16 @@ class RequestMetricAdmin(ReadOnlyAdmin):
 
 @admin.register(ProbeRecord)
 class ProbeRecordAdmin(ReadOnlyAdmin):
-    list_display = ["instance", "reachable", "latency_ms", "error", "created_at"]
+    list_display = ["instance", "reachable", "latency_ms", "failure_reason", "error", "created_at"]
+    readonly_fields = ["failure_reason", "suggestion"]
+
+    @admin.display(description="原因说明")
+    def failure_reason(self, obj):
+        return obj.failure_reason
+
+    @admin.display(description="排查建议")
+    def suggestion(self, obj):
+        return obj.suggestion
     list_filter = ["reachable", "created_at"]
     search_fields = ["instance__name"]
     list_select_related = ["instance"]

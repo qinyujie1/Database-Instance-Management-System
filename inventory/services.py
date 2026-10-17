@@ -8,6 +8,7 @@ from django.db import transaction
 from django.db.models import Q
 from django.utils import timezone
 from .crypto import decrypt, encrypt, new_password
+from .probe_errors import explain_probe
 from .models import Instance, PasswordRotation, ProbeRecord
 
 def validate_target(host):
@@ -18,15 +19,16 @@ def validate_target(host):
 def probe(instance):
     validate_target(instance.host)
     start = perf_counter()
-    reachable, error = False, ""
+    reachable, error, error_number = False, "", None
     try:
         with socket.create_connection((instance.host, instance.port), timeout=3):
             reachable = True
     except OSError as exc:
         error = type(exc).__name__
+        error_number = getattr(exc, "winerror", None) or exc.errno
     latency = round((perf_counter() - start) * 1000, 3)
-    ProbeRecord.objects.create(instance=instance, reachable=reachable, latency_ms=latency, error=error)
-    return {"instance_id": instance.pk, "reachable": reachable, "latency_ms": latency, "error": error}
+    ProbeRecord.objects.create(instance=instance, reachable=reachable, latency_ms=latency, error=error, error_number=error_number)
+    return {"instance_id": instance.pk, "reachable": reachable, "latency_ms": latency, "error": error, "error_number": error_number, **explain_probe(error, error_number)}
 
 def apply_remote_password(instance, candidate):
     if instance.engine == "mock":

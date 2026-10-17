@@ -235,3 +235,46 @@ class ConsoleTests(TestCase):
         self.assertEqual(self.browser.get("/admin/inventory/instancesnapshot/capture/").status_code, 405)
         self.assertEqual(self.browser.post("/admin/inventory/instancesnapshot/capture/").status_code, 302)
         queue.assert_called_once()
+
+
+class SortingAndProbeTests(TestCase):
+    def setUp(self):
+        ConsoleTests.setUp(self)
+
+    def test_sorting_defaults_and_descending(self):
+        Instance.objects.create(name="db-b", cluster=self.cluster, host="127.0.0.1", port=65000, username="other", password_encrypted=encrypt("initial-password"))
+        response = self.browser.get("/admin/inventory/instance/")
+        self.assertContains(response, "当前：实例编号升序")
+        self.assertEqual(list(response.context["cl"].result_list.values_list("name", flat=True)), ["db-a", "db-b"])
+        response = self.browser.get("/admin/inventory/instance/?o=-0&q=db")
+        self.assertContains(response, "当前：实例编号降序")
+        self.assertEqual(list(response.context["cl"].result_list.values_list("name", flat=True)), ["db-b", "db-a"])
+        self.assertIn(("q", "db"), response.context["sort_filters"])
+
+    @patch("inventory.services.socket.create_connection", side_effect=ConnectionRefusedError(10061, "refused"))
+    def test_refused_reason_in_api_page_and_history(self, connection):
+        from .models import ProbeRecord
+        response = self.client.post(f"/api/instances/{self.instance.pk}/probe/")
+        self.assertIn("连接被拒绝", response.data["reason"])
+        self.assertIn("服务是否启动", response.data["suggestion"])
+        self.assertEqual(response.data["error_number"], 10061)
+        record = ProbeRecord.objects.first()
+        self.assertIn("连接被拒绝", record.failure_reason)
+        self.assertContains(self.browser.get(f"/admin/inventory/instance/{self.instance.pk}/tools/"), "连接被拒绝")
+        self.assertContains(self.browser.get("/admin/inventory/proberecord/"), "连接被拒绝")
+
+    def test_error_reason_classification(self):
+        import errno
+        from .probe_errors import explain_probe
+        self.assertIn("连接超时", explain_probe("TimeoutError")["reason"])
+        self.assertIn("网络或主机不可达", explain_probe("OSError", errno.ENETUNREACH)["reason"])
+        self.assertIn("权限", explain_probe("PermissionError")["reason"])
+        self.assertIn("无法确定", explain_probe("OSError")["reason"])
+        self.assertIn("已建立", explain_probe("")["reason"])
+
+    def test_mock_port_explanation(self):
+        self.instance.port = 65000
+        self.instance.save()
+        response = self.browser.get(f"/admin/inventory/instance/{self.instance.pk}/tools/")
+        self.assertContains(response, "新增记录不会自动启动数据库服务")
+        self.assertContains(response, "若未在此端口启动服务")

@@ -87,9 +87,21 @@ class ProbeRecord(models.Model):
     reachable = models.BooleanField("端口可达")
     latency_ms = models.FloatField("探测耗时（毫秒）")
     error = models.CharField("错误类型", max_length=100, blank=True)
+    error_number = models.IntegerField("系统错误码", null=True, blank=True)
     created_at = models.DateTimeField("探测时间", auto_now_add=True)
 
     class Meta:
         verbose_name = "TCP 探测记录"
         verbose_name_plural = verbose_name
         ordering = ["-id"]
+
+
+    @property
+    def failure_reason(self):
+        from .probe_errors import explain_probe
+        return explain_probe(self.error, self.error_number)["reason"]
+
+    @property
+    def suggestion(self):
+        from .probe_errors import explain_probe
+        return explain_probe(self.error, self.error_number)["suggestion"]
