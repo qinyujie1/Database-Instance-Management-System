@@ -1,0 +1,57 @@
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: dbims
+      POSTGRES_USER: dbims
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U dbims"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+  redis:
+    image: redis:7-alpine
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+  web:
+    build: .
+    env_file: .env
+    environment: &app_environment
+      CELERY_BROKER_URL: redis://redis:6379/0
+      POSTGRES_HOST: db
+      POSTGRES_DB: dbims
+      POSTGRES_USER: dbims
+    ports: ["127.0.0.1:8010:8000"]
+    depends_on:
+      db: {condition: service_healthy}
+      redis: {condition: service_healthy}
+    command: ["sh", "-c", "python manage.py migrate && python manage.py runserver 0.0.0.0:8000"]
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/admin/login/')"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+  worker:
+    build: .
+    env_file: .env
+    environment: *app_environment
+    command: ["celery", "-A", "config", "worker", "--loglevel=INFO"]
+    depends_on:
+      web: {condition: service_healthy}
+  beat:
+    build: .
+    env_file: .env
+    environment: *app_environment
+    command: ["celery", "-A", "config", "beat", "--loglevel=INFO", "--schedule=/schedule/celerybeat-schedule"]
+    volumes: ["beat_data:/schedule"]
+    depends_on:
+      web: {condition: service_healthy}
+volumes:
+  postgres_data:
+  beat_data:

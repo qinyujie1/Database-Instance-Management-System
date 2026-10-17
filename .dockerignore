@@ -1,0 +1,7 @@
+.git
+.venv
+.env
+.local-credentials.txt
+.runtime
+*.sqlite3
+__pycache__
