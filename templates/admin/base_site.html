@@ -1,0 +1,5 @@
+{% extends "admin/base.html" %}
+{% block title %}{{ title }} · 数据库管理工作台{% endblock %}
+{% block branding %}<div id="site-name"><a href="{% url 'admin:index' %}">DB CONSOLE <span style="font-size:14px;font-weight:400;opacity:.75;margin-left:12px">数据库实例管理系统</span></a></div>{% endblock %}
+{% block extrastyle %}{{ block.super }}{% include "admin/console_style.html" %}{% endblock %}
+{% block nav-global %}{% endblock %}

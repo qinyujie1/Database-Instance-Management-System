@@ -89,4 +89,5 @@ class RotationViewSet(viewsets.ReadOnlyModelViewSet):
 
 @staff_member_required
 def dashboard(request):
-    return render(request, "dashboard.html", {"departments": Department.objects.count(), "clusters": Cluster.objects.count(), "instances": Instance.objects.count(), "rotations": PasswordRotation.objects.filter(success=True).count(), "recent": Instance.objects.select_related("cluster__department").order_by("id")[:12], "snapshots": InstanceSnapshot.objects.filter(dimension="department", date=timezone.localdate())})
+    from django.contrib import admin
+    return admin.site.index(request)

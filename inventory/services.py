@@ -8,7 +8,7 @@ from django.db import transaction
 from django.db.models import Q
 from django.utils import timezone
 from .crypto import decrypt, encrypt, new_password
-from .models import Instance, PasswordRotation
+from .models import Instance, PasswordRotation, ProbeRecord
 
 def validate_target(host):
     address = ipaddress.ip_address(host)
@@ -24,7 +24,9 @@ def probe(instance):
             reachable = True
     except OSError as exc:
         error = type(exc).__name__
-    return {"instance_id": instance.pk, "reachable": reachable, "latency_ms": round((perf_counter() - start) * 1000, 3), "error": error}
+    latency = round((perf_counter() - start) * 1000, 3)
+    ProbeRecord.objects.create(instance=instance, reachable=reachable, latency_ms=latency, error=error)
+    return {"instance_id": instance.pk, "reachable": reachable, "latency_ms": latency, "error": error}
 
 def apply_remote_password(instance, candidate):
     if instance.engine == "mock":

@@ -28,3 +28,12 @@ def snapshot_instances():
         # the midnight snapshot if instances are edited later in the day.
         InstanceSnapshot.objects.bulk_create(rows, ignore_conflicts=True)
     return {"date": today.isoformat(), "rows": len(rows)}
+
+
+@shared_task(bind=True, max_retries=3)
+def rotate_one_password(self, instance_id, requested_at):
+    from datetime import datetime
+    result = rotate_instance(instance_id, cutoff=datetime.fromisoformat(requested_at))
+    if result == "failed":
+        raise self.retry(exc=RuntimeError("Rotation failed; inspect audit records"), countdown=300)
+    return result

@@ -156,3 +156,82 @@ class SystemTests(TestCase):
         url = f"/api/instances/{self.instance.pk}/"
         self.assertEqual(self.client.delete(url).status_code, 409)
         self.assertEqual(self.client.patch(url, {"password": "overwritten-secret"}, format="json").status_code, 409)
+
+
+class ConsoleTests(TestCase):
+    def setUp(self):
+        SystemTests.setUp(self)
+        self.user.is_superuser = True
+        self.user.save()
+        from django.test import Client
+        self.browser = Client()
+        self.browser.force_login(self.user)
+
+    def test_console_feature_navigation(self):
+        response = self.browser.get("/admin/")
+        for label in ["资源管理 · 增删改查", "TCP 端口探测", "密码自动轮换", "每日实例数量统计", "请求耗时监控"]:
+            self.assertContains(response, label)
+
+    def test_admin_instance_crud_encrypts_password(self):
+        data = {"name": "admin-created", "cluster": self.cluster.pk, "host": "127.0.0.1", "port": 5432, "engine": "mock", "database": "postgres", "username": "dbadmin", "password": "new-admin-secret", "_save": "保存"}
+        response = self.browser.post("/admin/inventory/instance/add/", data)
+        self.assertEqual(response.status_code, 302)
+        obj = Instance.objects.get(name="admin-created")
+        self.assertEqual(decrypt(obj.password_encrypted), "new-admin-secret")
+        response = self.browser.get(f"/admin/inventory/instance/{obj.pk}/change/")
+        self.assertNotContains(response, "new-admin-secret")
+        data.update(name="admin-edited", password="")
+        self.assertEqual(self.browser.post(f"/admin/inventory/instance/{obj.pk}/change/", data).status_code, 302)
+        obj.refresh_from_db()
+        self.assertEqual(obj.name, "admin-edited")
+        self.assertEqual(decrypt(obj.password_encrypted), "new-admin-secret")
+        self.assertEqual(self.browser.post(f"/admin/inventory/instance/{obj.pk}/delete/", {"post": "yes"}).status_code, 302)
+        self.assertFalse(Instance.objects.filter(pk=obj.pk).exists())
+
+    @patch("inventory.services.socket.create_connection")
+    def test_admin_probe_records_result(self, connection):
+        from .models import ProbeRecord
+        response = self.browser.post(f"/admin/inventory/instance/{self.instance.pk}/tools/", {"action": "probe"})
+        self.assertContains(response, "端口可达")
+        self.assertTrue(ProbeRecord.objects.get().reachable)
+
+    @patch("inventory.tasks.rotate_one_password.delay")
+    def test_admin_rotation_queues_only_on_post(self, queue):
+        url = f"/admin/inventory/instance/{self.instance.pk}/tools/"
+        self.assertEqual(self.browser.get(url).status_code, 200)
+        queue.assert_not_called()
+        self.assertEqual(self.browser.post(url, {"action": "rotate"}).status_code, 302)
+        self.assertEqual(queue.call_args.args[0], self.instance.pk)
+
+    def test_admin_rejects_changes_during_rotation(self):
+        self.instance.rotation_token = "busy"
+        self.instance.save()
+        response = self.browser.post(f"/admin/inventory/instance/{self.instance.pk}/change/", {"name": "bad-edit", "cluster": self.cluster.pk, "host": "127.0.0.1", "port": 5432, "engine": "mock", "database": "postgres", "username": "dbadmin", "password": ""})
+        self.assertContains(response, "凭据正在轮换")
+        self.assertEqual(self.browser.post(f"/admin/inventory/instance/{self.instance.pk}/delete/", {"post": "yes"}).status_code, 403)
+        self.instance.refresh_from_db()
+        self.assertEqual(self.instance.name, "db-a")
+
+    def test_request_metrics_visible_and_do_not_store_query(self):
+        from .models import RequestMetric
+        self.browser.get("/api/instances/?sensitive=test-secret")
+        record = RequestMetric.objects.first()
+        self.assertNotIn("test-secret", record.route)
+        self.assertGreaterEqual(record.duration_ms, 0)
+        self.assertContains(self.browser.get("/admin/inventory/requestmetric/"), "请求耗时监控")
+
+    def test_admin_operations_require_permission_and_csrf(self):
+        from django.test import Client
+        client = Client(enforce_csrf_checks=True)
+        client.force_login(self.user)
+        url = f"/admin/inventory/instance/{self.instance.pk}/tools/"
+        self.assertEqual(client.post(url, {"action": "probe"}).status_code, 403)
+        self.user.is_superuser = False
+        self.user.save()
+        self.assertEqual(self.browser.get(url).status_code, 403)
+
+    @patch("inventory.tasks.snapshot_instances.delay")
+    def test_snapshot_capture_queues_task(self, queue):
+        self.assertEqual(self.browser.get("/admin/inventory/instancesnapshot/capture/").status_code, 405)
+        self.assertEqual(self.browser.post("/admin/inventory/instancesnapshot/capture/").status_code, 302)
+        queue.assert_called_once()
