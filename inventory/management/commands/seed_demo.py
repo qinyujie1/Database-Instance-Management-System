@@ -31,7 +31,7 @@ class Command(BaseCommand):
                     created_ids.append(instance.pk)
             user, created = get_user_model().objects.get_or_create(username="admin", defaults={"is_staff": True, "is_superuser": True})
             if created:
-                password = secrets.token_urlsafe(18)
+                password = "123456" if settings.DEMO_MODE else secrets.token_urlsafe(18)
                 user.set_password(password)
                 user.save()
                 token = Token.objects.create(user=user)

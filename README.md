@@ -29,7 +29,7 @@ powershell -ExecutionPolicy Bypass -File scripts/start.ps1
 - 管理看板：http://127.0.0.1:8010/
 - Django 管理后台：http://127.0.0.1:8010/admin/
 - 可交互 API：http://127.0.0.1:8010/api/
-- 用户名：`admin`；**随机密码和 API Token 在本地 `.local-credentials.txt` 中**。
+- 本地演示用户名：`admin`，初始密码：`123456`，登录页直接显示提示。`DEMO_MODE=1` 时新建管理员使用该初始密码；重复运行 seed_demo 不重置已有密码。关闭演示模式时新用户使用随机密码。API Token 和本地登录信息保存在 `.local-credentials.txt`。
 - `seed_demo` 可重复运行，不会覆盖已有实例或重置管理员密码。演示数据为 6 个部门、12 个集群、120 个模拟实例，并实际执行一次模拟凭据轮换、生成当天快照。
 - 每三个模拟实例有一个指向本地 Web 端口 8010，便于演示 TCP 可达；其余指向 65000（若此端口有其他服务监听，也可能可达）。TCP 可达仅代表端口开放，不代表数据库可正常认证。
 - 后台运行三个进程：Django Web、Celery solo worker、Celery Beat。日志和进程记录位于 `.runtime/`。
@@ -116,7 +116,7 @@ docker compose exec web python manage.py createsuperuser
 docker compose exec web python manage.py seed_demo --instances 120
 ```
 
-该配置使用持久化 PostgreSQL、Redis、Web、Worker、Beat。容器内模拟实例的 `127.0.0.1:8010` 并非 Windows Web 端口，TCP 结果会与本机不同。Compose 仍使用 Django 开发服务器供验题；生产需要 WSGI 服务器、HTTPS、`DEBUG=0`、严格 `ALLOWED_HOSTS`、密钥托管和备份，不应直接用 runserver 对外服务。
+该配置使用持久化 PostgreSQL、Redis、Web、Worker、Beat。容器内模拟实例的 `127.0.0.1:8010` 并非 Windows Web 端口，TCP 结果会与本机不同。Compose 仍使用 Django 开发服务器供验题；生产需要 WSGI 服务器、HTTPS、`DJANGO_DEBUG=0`、`DEMO_MODE=0`、严格 `ALLOWED_HOSTS`、密钥托管和备份，不应直接用 runserver 对外服务。
 
 ## 测试与手动任务
 
@@ -148,3 +148,5 @@ compose.yaml                PostgreSQL + Redis 运行方案
 ```
 
 参考：[Celery 定时任务](https://docs.celeryq.dev/en/stable/userguide/periodic-tasks.html)、[Celery Windows 支持说明](https://docs.celeryq.dev/en/stable/faq.html#does-celery-support-windows)、[Django 部署检查清单](https://docs.djangoproject.com/en/5.2/howto/deployment/checklist/)。
+
+登录页采用响应式双栏设计，支持密码显隐、键盘操作和中文错误提示。调试开关使用 `DJANGO_DEBUG`，避免与操作系统已有的通用 `DEBUG` 环境变量冲突。
